@@ -119,10 +119,11 @@ final class EmWebSocket
      * @param string $partial    bereits empfangene Teile einer fragmentierten Nachricht
      * @param int    $partialOp  Opcode dieser Nachricht (0 = keine offen)
      * @param bool   $requireMask true auf der Serverseite (Clients maskieren); false für Rahmen eines Servers an uns als Client
+     * @param int    $maxMessage  größte zulässige Nachricht in Bytes (Rahmen und zusammengesetzt)
      * @return array{messages: array<int, array{op: int, data: string}>, buffer: string, partial: string, partialOp: int}
      * @throws \InvalidArgumentException bei Protokollverstoß (nicht maskiert, zu groß, ungültiger Opcode)
      */
-    public static function decode(string $buffer, string $partial = '', int $partialOp = 0, bool $requireMask = true): array
+    public static function decode(string $buffer, string $partial = '', int $partialOp = 0, bool $requireMask = true, int $maxMessage = self::MAX_MESSAGE): array
     {
         $messages = [];
         while (strlen($buffer) >= 2) {
@@ -149,7 +150,7 @@ final class EmWebSocket
             if ($requireMask && !$masked) {
                 throw new \InvalidArgumentException('client frame is not masked');
             }
-            if ($len < 0 || $len > self::MAX_MESSAGE) {
+            if ($len < 0 || $len > $maxMessage) {
                 throw new \InvalidArgumentException('frame too large');
             }
             $maskLen = $masked ? 4 : 0;
@@ -173,7 +174,7 @@ final class EmWebSocket
                     throw new \InvalidArgumentException('unexpected continuation');
                 }
                 $partial .= $payload;
-                if (strlen($partial) > self::MAX_MESSAGE) {
+                if (strlen($partial) > $maxMessage) {
                     throw new \InvalidArgumentException('message too large');
                 }
                 if ($fin) {

@@ -57,14 +57,14 @@ trait EmGatewayVoice
     }
 
     /** Mikrofon-Rahmen 0x07 [Sitzung u32 BE][Folge u16 BE][PCM 16 kHz] vom /data-Socket des Dots. */
-    private function onSessionAudio(string $ip, string $data): void
+    private function onSessionAudio(string $ip, string $tok, string $data): void
     {
         if (strlen($data) < 8) {
             return;
         }
         $head = unpack('Nsession/nseq', substr($data, 1, 6));
         $voice = $this->voiceState();
-        if ($voice === [] || (int)$head['session'] !== (int)$voice['session'] || $this->deviceByIp($ip) !== $voice['dev']) {
+        if ($voice === [] || (int)$head['session'] !== (int)$voice['session'] || $this->deviceByIp($ip, $tok) !== $voice['dev']) {
             return; // Rahmen einer beendeten oder fremden Sitzung
         }
         if (!EmSpool::append('mic_' . $voice['dev'], substr($data, 7))) {
@@ -186,10 +186,11 @@ trait EmGatewayVoice
         $this->SetValue('VOICE_CMD', (string)json_encode($cmd));
     }
 
-    private function deviceByIp(string $ip): string
+    /** Das angemeldete Gerät hinter einer /data-Verbindung: gleiche Adresse und gleiches Token wie sein /control. */
+    private function deviceByIp(string $ip, string $tok): string
     {
         foreach ($this->devices() as $id => $d) {
-            if ($d['ip'] === $ip) {
+            if ($d['ip'] === $ip && ($d['tok'] ?? '') === $tok) {
                 return (string)$id;
             }
         }

@@ -16,7 +16,7 @@
 ## Entkopplung von Gateway und Voice
 
 - **Die beiden Instanzen rufen sich nie gegenseitig auf.** Symcon arbeitet je Instanz nacheinander ab; zwei Instanzen, die sich gleichzeitig synchron aufrufen, blockieren einander (Plattformwissen `instanzen-und-nebenlaeufigkeit.md`).
-- **Ton liegt in Spool-Dateien** (`libs/EmSpool.php`, im Symcon-Medienordner unter `echomuse/`): `mic_<Gerät>.pcm` schreibt das Gateway, `out_<Gerät>.pcm` schreibt Voice; jeder Leser merkt sich seine Position. Höchstens 8 MiB je Datei.
+- **Ton liegt in Spool-Dateien** (`libs/EmSpool.php`, im Kernel-Ordner `echomuse-spool/`, Ordner 0700, Dateien 0600, Symlinks nicht befolgt; bis 01.11.2026 unter `media/echomuse/` und damit für andere Konten lesbar): `mic_<Gerät>.pcm` schreibt das Gateway, `out_<Gerät>.pcm` schreibt Voice; jeder Leser merkt sich seine Position. Höchstens 8 MiB je Datei.
 - **Meldungen laufen über Variablen** (`VOICE_CMD`, `VOICE_MIC` am Gateway, `EVENT` an Voice) und `RegisterMessage(VM_UPDATE)`, die Symcon asynchron zustellt. Jede Meldung trägt einen Zähler, damit auch eine gleiche Meldung eine Aktualisierung auslöst.
 - Ein Werkzeugaufruf an SymDo blockiert nur die Voice-Instanz kurz; das Gateway spielt weiter.
 

@@ -13,12 +13,17 @@ final class EmSpool
     /** Eine Sprachrunde ist kurz; darüber ist etwas kaputt, und die Platte soll nicht volllaufen. */
     public const MAX_BYTES = 8388608;
 
+    /**
+     * Mikrofon-Ton gehört nicht unter media/ (für andere Konten lesbar, Teil von Sicherungen):
+     * eigener Kernel-Ordner mit 0700, Dateien 0600, Symlinks werden nicht befolgt.
+     */
     public static function dir(): string
     {
-        $dir = rtrim(IPS_GetKernelDir(), '/') . '/media/echomuse/';
+        $dir = rtrim(IPS_GetKernelDir(), '/') . '/echomuse-spool/';
         if (!is_dir($dir)) {
-            @mkdir($dir, 0755, true);
+            @mkdir($dir, 0700, true);
         }
+        @chmod($dir, 0700);
         return $dir;
     }
 
@@ -31,17 +36,25 @@ final class EmSpool
     public static function append(string $name, string $bytes): bool
     {
         $file = self::path($name);
+        if (is_link($file)) {
+            @unlink($file);
+        }
         if (is_file($file) && filesize($file) + strlen($bytes) > self::MAX_BYTES) {
             return false;
         }
-        return @file_put_contents($file, $bytes, FILE_APPEND | LOCK_EX) !== false;
+        $alt = umask(0077);
+        try {
+            return @file_put_contents($file, $bytes, FILE_APPEND | LOCK_EX) !== false;
+        } finally {
+            umask($alt);
+        }
     }
 
     /** @return array{0: string, 1: int} die neuen Bytes ab $offset und die neue Position */
     public static function read(string $name, int $offset): array
     {
         $file = self::path($name);
-        if (!is_file($file) || filesize($file) <= $offset) {
+        if (is_link($file) || !is_file($file) || filesize($file) <= $offset) {
             return ['', $offset];
         }
         $fh = @fopen($file, 'rb');

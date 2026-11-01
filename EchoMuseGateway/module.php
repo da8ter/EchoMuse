@@ -34,6 +34,13 @@ class EchoMuseGateway extends IPSModuleStrict
     private const DEVICE_GUID = '{077221A9-EA1F-4A00-8BA3-679A85233E80}';
 
     private const IDLE_CLOSE_SECONDS = 60;
+    /**
+     * Grenzen für den Puffer `Conns`: er hält je Verbindung den noch nicht zerlegten Rest und
+     * eine offene Teilnachricht (Base64). Symcon kappt Puffer bei 512 kB; darüber wäre das JSON
+     * abgeschnitten und alle Verbindungen verloren. 8 Verbindungen à 2 × 16 kB bleiben darunter.
+     */
+    private const MAX_CONNECTIONS = 8;
+    private const MAX_DEVICE_MESSAGE = 16384;
 
     public function Create(): void
     {
@@ -108,8 +115,13 @@ class EchoMuseGateway extends IPSModuleStrict
         switch ((int)($data['Type'] ?? 0)) {
             case 1: // verbunden
                 $conns = $this->conns();
+                if (!isset($conns[$key]) && count($conns) >= self::MAX_CONNECTIONS) {
+                    $this->SendDebug('Connect', $key . ' refused: too many connections', 0);
+                    $this->sendRaw((string)$data['ClientIP'], (int)$data['ClientPort'], EmWebSocket::httpError(503, 'Service Unavailable'));
+                    break;
+                }
                 $conns[$key] = ['ip' => (string)$data['ClientIP'], 'port' => (int)$data['ClientPort'], 'phase' => 'http', 'path' => '',
-                    'buf' => '', 'partial' => '', 'pop' => 0, 'seen' => (int)EmClock::now(), 'dev' => ''];
+                    'buf' => '', 'partial' => '', 'pop' => 0, 'seen' => (int)EmClock::now(), 'dev' => '', 'tok' => ''];
                 $this->saveConns($conns);
                 break;
             case 2: // getrennt
@@ -126,7 +138,11 @@ class EchoMuseGateway extends IPSModuleStrict
     {
         $conns = $this->conns();
         if (!isset($conns[$key])) { // Verbunden-Meldung verpasst (Neustart des Gateways): Verbindung nachtragen
-            $conns[$key] = ['ip' => $ip, 'port' => $port, 'phase' => 'http', 'path' => '', 'buf' => '', 'partial' => '', 'pop' => 0, 'seen' => (int)EmClock::now(), 'dev' => ''];
+            if (count($conns) >= self::MAX_CONNECTIONS) {
+                $this->sendRaw($ip, $port, EmWebSocket::close(1013));
+                return;
+            }
+            $conns[$key] = ['ip' => $ip, 'port' => $port, 'phase' => 'http', 'path' => '', 'buf' => '', 'partial' => '', 'pop' => 0, 'seen' => (int)EmClock::now(), 'dev' => '', 'tok' => ''];
         }
         $c = $conns[$key];
         $c['seen'] = (int)EmClock::now();
@@ -150,10 +166,13 @@ class EchoMuseGateway extends IPSModuleStrict
                 $this->sendRaw($ip, $port, EmWebSocket::handshakeResponse($req['headers']['sec-websocket-key']));
                 $c['phase'] = 'ws';
                 $c['path'] = $path;
+                // Nur der Hash: der Puffer soll das Geheimnis des Dots nicht im Klartext halten.
+                $token = (string)($req['headers']['x-em-token'] ?? '');
+                $c['tok'] = $token !== '' ? hash('sha256', $token) : '';
                 $buffer = $req['rest'];
                 $this->SendDebug('Connect', sprintf('%s %s', $key, $path), 0);
             }
-            $out = EmWebSocket::decode($buffer, (string)base64_decode($c['partial'], true), (int)$c['pop']);
+            $out = EmWebSocket::decode($buffer, (string)base64_decode($c['partial'], true), (int)$c['pop'], true, self::MAX_DEVICE_MESSAGE);
             $c['buf'] = base64_encode($out['buffer']);
             $c['partial'] = base64_encode($out['partial']);
             $c['pop'] = $out['partialOp'];
@@ -194,7 +213,7 @@ class EchoMuseGateway extends IPSModuleStrict
                 return;
             case EmWebSocket::OP_BINARY:
                 if ($c['path'] === '/data' && $data !== '' && ord($data[0]) === EmProtocol::DATA_SESSION_AUDIO) {
-                    $this->onSessionAudio((string)$c['ip'], $data);
+                    $this->onSessionAudio((string)$c['ip'], (string)($c['tok'] ?? ''), $data);
                 }
                 return;
             default:
@@ -248,11 +267,13 @@ class EchoMuseGateway extends IPSModuleStrict
             return;
         }
         $id = $reg['id'];
-        if (!$this->approved($id)) {
+        $refused = $this->admit($id, (string)$c['ip'], (string)($c['tok'] ?? ''));
+        if ($refused !== '') {
             $pending = json_decode($this->ReadAttributeString('Pending'), true) ?: [];
-            $pending[$id] = ['ip' => $c['ip'], 'version' => $reg['version'], 'seen' => (int)EmClock::now()];
+            $pending[$id] = ['ip' => $c['ip'], 'tok' => (string)($c['tok'] ?? ''), 'version' => $reg['version'], 'reason' => $refused, 'seen' => (int)EmClock::now()];
             $this->WriteAttributeString('Pending', (string)json_encode($pending));
-            $this->LogMessage(sprintf('%s: %s (%s)', $this->Translate('Unknown EchoMuse device waiting for approval'), $id, $c['ip']), KL_NOTIFY);
+            $this->LogMessage(sprintf('%s: %s (%s, %s)', $this->Translate('EchoMuse device waiting for approval'), $id, $c['ip'], $this->Translate($refused)),
+                $refused === 'unknown device' ? KL_NOTIFY : KL_WARNING);
             $this->sendRaw($c['ip'], $c['port'], EmWebSocket::text(EmProtocol::pending()));
             $this->sendRaw($c['ip'], $c['port'], EmWebSocket::close(1000));
             $this->dropConnection($key);
@@ -268,7 +289,7 @@ class EchoMuseGateway extends IPSModuleStrict
         $conns[$key]['dev'] = $id;
         $this->saveConns($conns);
         $devices = $this->devices();
-        $devices[$id] = ['key' => $key, 'ip' => $c['ip'], 'version' => $reg['version'], 'caps' => $reg['caps'], 'os' => $reg['os'], 'board' => $reg['board'], 'seen' => (int)EmClock::now()];
+        $devices[$id] = ['key' => $key, 'ip' => $c['ip'], 'tok' => (string)($c['tok'] ?? ''), 'version' => $reg['version'], 'caps' => $reg['caps'], 'os' => $reg['os'], 'board' => $reg['board'], 'seen' => (int)EmClock::now()];
         $this->saveDevices($devices);
         $this->sendRaw($c['ip'], $c['port'], EmWebSocket::text(EmProtocol::ack($id, (int)(microtime(true) * 1000), $this->ackFeatures())));
         $this->configureVoice($id);
@@ -355,12 +376,12 @@ class EchoMuseGateway extends IPSModuleStrict
         if (preg_match('/^[A-Za-z0-9_.:-]{1,64}$/', $id) !== 1) {
             return 'invalid device id';
         }
-        $approved = $this->approvedList();
-        if (!in_array($id, $approved, true)) {
-            $approved[] = $id;
-            $this->WriteAttributeString('Approved', (string)json_encode($approved));
-        }
         $pending = json_decode($this->ReadAttributeString('Pending'), true) ?: [];
+        // Die Freigabe gilt dem Gerät, das gerade wartet: dessen Adresse und Token werden gebunden.
+        // Ohne Warteeintrag (Freigabe vorab) bindet die erste Anmeldung.
+        $approved = $this->approvedMap();
+        $approved[$id] = ['ip' => (string)($pending[$id]['ip'] ?? ''), 'tok' => (string)($pending[$id]['tok'] ?? '')];
+        $this->WriteAttributeString('Approved', (string)json_encode($approved));
         unset($pending[$id]);
         $this->WriteAttributeString('Pending', (string)json_encode($pending));
 
@@ -380,8 +401,11 @@ class EchoMuseGateway extends IPSModuleStrict
 
     public function GetConfigurationForm(): string
     {
-        $pending = array_keys(json_decode($this->ReadAttributeString('Pending'), true) ?: []);
-        $options = array_map(static fn(string $id): array => ['caption' => $id, 'value' => $id], $pending);
+        $options = [];
+        foreach (json_decode($this->ReadAttributeString('Pending'), true) ?: [] as $pid => $p) {
+            $reason = (string)($p['reason'] ?? '');
+            $options[] = ['caption' => $pid . ($reason !== '' && $reason !== 'unknown device' ? ' (' . $this->Translate($reason) . ')' : ''), 'value' => (string)$pid];
+        }
         $online = array_map(static fn(string $id): string => $id, array_keys($this->devices()));
         return (string)json_encode([
             'elements' => [
@@ -403,16 +427,49 @@ class EchoMuseGateway extends IPSModuleStrict
 
     // ------------------------------------------------------------------ Hilfen
 
-    private function approved(string $id): bool
+    /**
+     * Ob sich ein Gerät anmelden darf. Die Gerätekennung ist öffentlich (steht im Hostnamen),
+     * deshalb hängt die Freigabe zusätzlich am Token des Dots (Kopfzeile X-EM-Token), sonst an
+     * seiner Adresse. Beides wird bei der Freigabe oder der ersten Anmeldung danach gebunden.
+     *
+     * @return string '' = zugelassen, sonst der Grund
+     */
+    private function admit(string $id, string $ip, string $tok): string
     {
-        return $this->ReadPropertyBoolean('AutoApprove') || in_array($id, $this->approvedList(), true);
+        if ($this->ReadPropertyBoolean('AutoApprove')) {
+            return '';
+        }
+        $approved = $this->approvedMap();
+        if (!isset($approved[$id])) {
+            return 'unknown device';
+        }
+        $bound = $approved[$id];
+        if ($bound['tok'] !== '') {
+            return hash_equals($bound['tok'], $tok) ? '' : 'token does not match';
+        }
+        if ($bound['ip'] !== '' && $bound['ip'] !== $ip) {
+            return 'address changed';
+        }
+        if ($bound['ip'] !== $ip || $tok !== '') {
+            $approved[$id] = ['ip' => $ip, 'tok' => $tok];
+            $this->WriteAttributeString('Approved', (string)json_encode($approved));
+        }
+        return '';
     }
 
-    /** @return array<int, string> */
-    private function approvedList(): array
+    /** @return array<string, array{ip: string, tok: string}> freigegebene Geräte mit ihrer Bindung */
+    private function approvedMap(): array
     {
-        $list = json_decode($this->ReadAttributeString('Approved'), true);
-        return is_array($list) ? array_map('strval', $list) : [];
+        $raw = json_decode($this->ReadAttributeString('Approved'), true);
+        $map = [];
+        foreach (is_array($raw) ? $raw : [] as $k => $v) {
+            if (is_int($k)) { // bis 1.0: Liste von Kennungen ohne Bindung
+                $map[(string)$v] = ['ip' => '', 'tok' => ''];
+            } elseif (is_array($v)) {
+                $map[(string)$k] = ['ip' => (string)($v['ip'] ?? ''), 'tok' => (string)($v['tok'] ?? '')];
+            }
+        }
+        return $map;
     }
 
     /** @param array<string, mixed> $payload */
@@ -451,7 +508,7 @@ class EchoMuseGateway extends IPSModuleStrict
             return null;
         }
         foreach ($this->conns() as $c) {
-            if ($c['path'] === '/data' && $c['phase'] === 'ws' && $c['ip'] === $dev['ip']) {
+            if ($c['path'] === '/data' && $c['phase'] === 'ws' && $c['ip'] === $dev['ip'] && ($c['tok'] ?? '') === ($dev['tok'] ?? '')) {
                 return $c;
             }
         }

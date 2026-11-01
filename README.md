@@ -38,7 +38,7 @@ Symcon als Controller für Echo Dots der 2. Generation mit der freien Firmware [
 
 1. **EchoMuse Gateway** anlegen; es legt einen Server Socket auf Port 8767 an.
 2. Auf dem Dot die Controller-Adresse eintragen: `/data/local/etc/echomuse/controller.json` mit `{"endpoints":[{"host":"<Symcon-Adresse>","port":8767}]}`. mDNS gibt es noch nicht. Liegt dort eine `ca.pem`, wählt der Dot nur verschlüsselt; das Gateway spricht noch kein TLS.
-3. Der Dot meldet sich an und erscheint im Gateway unter den wartenden Geräten. Freigeben legt die Geräte-Instanz an.
+3. Der Dot meldet sich an und erscheint im Gateway unter den wartenden Geräten. Freigeben legt die Geräte-Instanz an. Die Freigabe gilt nur für das Token des Dots oder, wenn er keins schickt, für seine Adresse: Ändert sich die Adresse, wartet der Dot erneut auf Freigabe.
 
 ### Sprachgespräche (EchoMuse Voice)
 
@@ -65,4 +65,5 @@ Die Rückgabe ist leer, wenn der Befehl angenommen wurde, sonst der Grund. `EMGD
 
 ## 6. Versionshistorie
 
+- **1.1**: Freigabe an Token oder Adresse des Dots gebunden; Grenzen für Nachrichtengröße und Zahl der Verbindungen; Mikrofon-Ton in einem nur für Symcon lesbaren Ordner statt im Medienordner.
 - **1.0**: eigene Bibliothek, vorher Teil von Sprachausgabe 0.2. Modul-GUIDs und Präfixe sind gleich geblieben, bestehende Instanzen laufen weiter. Neu: LED-Ring; Ansagen über eine Datei statt des Instanz-Puffers (längere Ansagen kamen vorher nicht an).

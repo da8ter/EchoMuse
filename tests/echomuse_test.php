@@ -423,6 +423,53 @@ $take('192.0.2.50', 40010);
 $GLOBALS['clientSent'] = [];
 EchoMuseTestSecondDot($gw, $deliver, $request, $send, $register, $take, $json);
 
+section('Bindung der Freigabe (Token oder Adresse)');
+$anmelden = static function (string $ip, int $port, string $id, ?string $token) use ($deliver, $request, $send, $register, $take, $json): string {
+    $deliver($ip, $port, 1);
+    $req = $request('/control');
+    $req = $token === null ? str_replace("X-EM-Token: t\r\n", '', $req) : str_replace('X-EM-Token: t', 'X-EM-Token: ' . $token, $req);
+    $deliver($ip, $port, 0, $req);
+    $take($ip, $port);
+    $deliver($ip, $port, 0, $send($register($id)));
+    $type = (string)($json($take($ip, $port)[0] ?? [])['type'] ?? '');
+    $deliver($ip, $port, 2);
+    return $type;
+};
+$wartend = static fn(string $id): string => (string)(json_decode(Kernel::$instances[$gw]['attributes']['Pending'], true)[$id]['reason'] ?? '');
+check($anmelden('192.0.2.99', 44000, 'G090LF0123456789', 'falsch') === 'pending' && $wartend('G090LF0123456789') === 'token does not match', 'fremdes Token unter bekannter Kennung: wartet, Grund Token');
+check($anmelden('192.0.2.99', 44001, 'G090LF0123456789', null) === 'pending', 'ohne Token unter einer an ein Token gebundenen Kennung: wartet');
+check(!str_contains(Kernel::$instances[$gw]['attributes']['Approved'], '"t"') && !str_contains((string)json_encode(Kernel::$instances[$gw]['attributes']), 'X-EM'), 'Token steht nur als Hash in den Attributen');
+check($anmelden('192.0.2.80', 44010, 'OHNETOKEN1', null) === 'pending' && EMGW_ApproveDevice($gw, 'OHNETOKEN1') === '', 'Dot ohne Token wartet und wird freigegeben');
+check($anmelden('192.0.2.80', 44011, 'OHNETOKEN1', null) === 'ack', 'Dot ohne Token: Anmeldung von der freigegebenen Adresse');
+check($anmelden('192.0.2.81', 44012, 'OHNETOKEN1', null) === 'pending' && $wartend('OHNETOKEN1') === 'address changed', 'Dot ohne Token: andere Adresse wartet, Grund Adresse');
+check(EMGW_ApproveDevice($gw, 'OHNETOKEN1') === '' && $anmelden('192.0.2.81', 44013, 'OHNETOKEN1', null) === 'ack', 'erneute Freigabe bindet die neue Adresse');
+Kernel::$instances[$gw]['attributes']['Approved'] = '["ALTLISTE1"]';
+check($anmelden('192.0.2.82', 44020, 'ALTLISTE1', 'geheim') === 'ack' && $anmelden('192.0.2.83', 44021, 'ALTLISTE1', 'geheim') === 'ack', 'Freigabeliste aus 1.0: erste Anmeldung bindet das Token, das dann auch von anderer Adresse gilt');
+check($anmelden('192.0.2.82', 44022, 'ALTLISTE1', 'anders') === 'pending', 'Freigabeliste aus 1.0: danach zählt das gebundene Token');
+
+section('Grenzen für den Verbindungspuffer');
+$deliver('192.0.2.90', 45000, 1);
+$deliver('192.0.2.90', 45000, 0, $request('/control'));
+$take('192.0.2.90', 45000);
+$deliver('192.0.2.90', 45000, 0, EmWebSocket::clientFrame(EmWebSocket::OP_BINARY, str_repeat('x', 20000)));
+$f = $take('192.0.2.90', 45000);
+check(($f[0]['op'] ?? 0) === EmWebSocket::OP_CLOSE && strlen((string)(Kernel::$instances[$gw]['buffers']['Conns'] ?? '')) < 4096, 'Nachricht über 16 kB: Verbindung mit Close beendet, Puffer bleibt klein');
+$abgewiesen = 0;
+for ($p = 46000; $p < 46012; $p++) {
+    $deliver('192.0.2.91', $p, 1);
+    $f = $take('192.0.2.91', $p);
+    $abgewiesen += str_contains((string)($f[0]['http'] ?? ''), '503') ? 1 : 0;
+}
+check($abgewiesen > 0 && count(json_decode((string)Kernel::$instances[$gw]['buffers']['Conns'], true)) <= 8, 'höchstens 8 Verbindungen, weitere bekommen 503');
+for ($p = 46000; $p < 46012; $p++) {
+    $deliver('192.0.2.91', $p, 2);
+}
+
+section('Spool-Dateien');
+check(EmSpool::append('probe_rechte', 'abc') && str_contains(EmSpool::path('probe_rechte'), '/echomuse-spool/') && !str_contains(EmSpool::path('probe_rechte'), '/media/'), 'Spool liegt im eigenen Kernel-Ordner, nicht unter media/');
+check((fileperms(EmSpool::path('probe_rechte')) & 0777) === 0600 && (fileperms(EmSpool::dir()) & 0777) === 0700, 'Datei 0600, Ordner 0700');
+EmSpool::clear('probe_rechte');
+
 section('AutoApprove');
 $gw2cfg = IPS_SetProperty($gw, 'AutoApprove', true);
 IPS_ApplyChanges($gw);

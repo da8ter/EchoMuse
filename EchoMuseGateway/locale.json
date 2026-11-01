@@ -2,7 +2,10 @@
     "translations": {
         "en": {
             "EchoMuse Gateway": "EchoMuse - Gateway",
-            "Unknown EchoMuse device waiting for approval": "Unknown EchoMuse device waiting for approval",
+            "EchoMuse device waiting for approval": "EchoMuse device waiting for approval",
+            "unknown device": "unknown device",
+            "address changed": "address changed",
+            "token does not match": "token does not match",
             "Audio connection lost during playback": "Audio connection lost during playback",
             "Port": "Port",
             "Accept every device without asking (home network only)": "Accept every device without asking (home network only)",
@@ -16,7 +19,10 @@
         },
         "de": {
             "EchoMuse Gateway": "EchoMuse - Gateway",
-            "Unknown EchoMuse device waiting for approval": "Unbekanntes EchoMuse-Gerät wartet auf Freigabe",
+            "EchoMuse device waiting for approval": "EchoMuse-Gerät wartet auf Freigabe",
+            "unknown device": "unbekanntes Gerät",
+            "address changed": "Adresse geändert",
+            "token does not match": "Token passt nicht",
             "Audio connection lost during playback": "Audioverbindung während der Wiedergabe verloren",
             "Port": "Port",
             "Accept every device without asking (home network only)": "Jedes Gerät ohne Nachfrage annehmen (nur im Heimnetz)",
