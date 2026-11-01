@@ -7,7 +7,7 @@
 ## Offen
 
 - **Echter Dot:** Anmeldung, Ansage und LED-Ring laufen am echten Dot (01.11.2026). Offen sind die Sprachrunde an echter Hardware (seit der Puffer-Korrektur nicht erprobt), Hörprobe der Antwortqualität und Latenz. Jede Aktion am Gerät nur auf Zusage.
-- **Absicherung des Gerätelinks:** kein TLS, kein mDNS. Die Freigabe ist an Token oder Adresse gebunden (`entscheidungen/echomuse-gateway.md`); ein Dot ohne Token hinter einem Relay/NAT ist damit nur schwach gebunden. Token und TLS des EchoMuse-Controllers (`ca.pem`, `token` auf dem Dot) wären der nächste Schritt.
+- **Absicherung des Gerätelinks:** kein TLS, kein mDNS. Die Freigabe ist an Token oder Adresse gebunden (`entscheidungen/echomuse-gateway.md`); ein Dot ohne Token hinter einem Relay/NAT ist damit nur schwach gebunden. Bewusst offen: Eine Freigabe ohne Warteeintrag (Skript, vorab) und Freigabelisten aus 1.0 binden die erste Anmeldung danach (wer zuerst kommt, wird gebunden). Token und TLS des EchoMuse-Controllers (`ca.pem`, `token` auf dem Dot) wären der nächste Schritt.
 - **Mehrere gleichzeitige Sprachrunden** (heute eine, zweiter Dot bekommt `busy`).
 - **Dazwischenreden während der Antwort:** erneutes Wecken desselben Dots bricht die Antwort ab; am echten Gerät nicht erprobt.
 

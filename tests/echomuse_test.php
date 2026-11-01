@@ -267,13 +267,22 @@ $take('192.0.2.53', 41002);
 $deliver('192.0.2.53', 41002, 0, EmWebSocket::text('x'));
 $f = $take('192.0.2.53', 41002);
 check(!empty(array_filter($f, static fn(array $x): bool => ($x['op'] ?? 0) === EmWebSocket::OP_CLOSE)), 'unmaskierter Rahmen: Close-Rahmen');
+$deliver('192.0.2.55', 41004, 1);
+$deliver('192.0.2.55', 41004, 0, $request('/control'));
+$take('192.0.2.55', 41004);
+EMGW_ApproveDevice($gw, 'STILL0001');
 $deliver('192.0.2.54', 41003, 1);
 $deliver('192.0.2.54', 41003, 0, $request('/control'));
 $take('192.0.2.54', 41003);
-Kernel::advance(90);
+$deliver('192.0.2.54', 41003, 0, $send($register('STILL0001')));
+$take('192.0.2.54', 41003);
+Kernel::advance(25);
+$f = $take('192.0.2.55', 41004);
+check(($f[0]['op'] ?? 0) === EmWebSocket::OP_CLOSE && ($f[0]['data'] ?? '') === pack('n', 1008), 'Verbindung ohne Anmeldung wird nach 10 s geschlossen (1008)');
+Kernel::advance(65);
 $f = $take('192.0.2.54', 41003);
 check(count(array_filter($f, static fn(array $x): bool => ($x['op'] ?? 0) === EmWebSocket::OP_PING)) >= 2 && !empty(array_filter($f, static fn(array $x): bool => ($x['op'] ?? 0) === EmWebSocket::OP_CLOSE)),
-    'stille Verbindung wird alle 20 s gepingt und nach über 60 s geschlossen');
+    'stille Verbindung eines Geräts wird alle 20 s gepingt und nach über 60 s geschlossen');
 
 section('Sprachrunde: Wakeword, Mikrofon, Werkzeug, Antwort');
 Kernel::registerModule(['ModuleID' => CLIENT_GUID, 'ModuleName' => 'Client Socket', 'ModuleType' => 1, 'Prefix' => 'CSCK',
@@ -460,7 +469,27 @@ for ($p = 46000; $p < 46012; $p++) {
     $f = $take('192.0.2.91', $p);
     $abgewiesen += str_contains((string)($f[0]['http'] ?? ''), '503') ? 1 : 0;
 }
-check($abgewiesen > 0 && count(json_decode((string)Kernel::$instances[$gw]['buffers']['Conns'], true)) <= 8, 'höchstens 8 Verbindungen, weitere bekommen 503');
+check($abgewiesen === 0 && count(json_decode((string)Kernel::$instances[$gw]['buffers']['Conns'], true)) <= 8, 'höchstens 8 Verbindungen; ein Neuer verdrängt die älteste ohne Gerät');
+$angemeldet = static fn(): array => array_keys(array_filter(json_decode((string)Kernel::$instances[$gw]['buffers']['Conns'], true), static fn(array $c): bool => $c['dev'] !== ''));
+$vorher = $angemeldet();
+for ($p = 46100; $p < 46120; $p++) {
+    $deliver('192.0.2.92', $p, 1);
+}
+check($vorher !== [] && array_diff($vorher, $angemeldet()) === [], 'Fremde Verbindungen verdrängen keine angemeldeten Dots');
+for ($p = 46100; $p < 46120; $p++) {
+    $deliver('192.0.2.92', $p, 2);
+}
+$pend = json_decode(Kernel::$instances[$gw]['attributes']['Pending'], true);
+$pend['WARTE0001'] = ['ip' => '192.0.2.40', 'tok' => '', 'version' => 'v', 'reason' => 'unknown device', 'seen' => 0];
+Kernel::$instances[$gw]['attributes']['Pending'] = json_encode($pend);
+$form = json_decode(Kernel::$instances[$gw]['object']->GetConfigurationForm(), true);
+$wahl = '';
+foreach ($form['actions'][1]['items'][0]['options'] as $o) {
+    $wahl = str_starts_with($o['value'], 'WARTE0001|') ? $o['value'] : $wahl;
+}
+$pend['WARTE0001']['ip'] = '192.0.2.41'; // ein anderes Gerät überschreibt den Eintrag, während das Formular offen ist
+Kernel::$instances[$gw]['attributes']['Pending'] = json_encode($pend);
+check($wahl !== '' && EMGW_ApproveDevice($gw, $wahl) !== '' && !str_contains(Kernel::$instances[$gw]['attributes']['Approved'], 'WARTE0001'), 'Formular-Freigabe gilt nur dem angezeigten Warteeintrag');
 for ($p = 46000; $p < 46012; $p++) {
     $deliver('192.0.2.91', $p, 2);
 }

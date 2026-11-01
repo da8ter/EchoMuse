@@ -41,6 +41,8 @@ class EchoMuseGateway extends IPSModuleStrict
      */
     private const MAX_CONNECTIONS = 8;
     private const MAX_DEVICE_MESSAGE = 16384;
+    /** So lange darf eine Verbindung ohne angemeldetes Gerät bestehen. */
+    private const UNBOUND_SECONDS = 10;
 
     public function Create(): void
     {
@@ -114,14 +116,14 @@ class EchoMuseGateway extends IPSModuleStrict
         $key = (string)($data['ClientIP'] ?? '') . ':' . (int)($data['ClientPort'] ?? 0);
         switch ((int)($data['Type'] ?? 0)) {
             case 1: // verbunden
-                $conns = $this->conns();
-                if (!isset($conns[$key]) && count($conns) >= self::MAX_CONNECTIONS) {
+                if (!$this->makeRoom($key)) {
                     $this->SendDebug('Connect', $key . ' refused: too many connections', 0);
                     $this->sendRaw((string)$data['ClientIP'], (int)$data['ClientPort'], EmWebSocket::httpError(503, 'Service Unavailable'));
                     break;
                 }
+                $conns = $this->conns();
                 $conns[$key] = ['ip' => (string)$data['ClientIP'], 'port' => (int)$data['ClientPort'], 'phase' => 'http', 'path' => '',
-                    'buf' => '', 'partial' => '', 'pop' => 0, 'seen' => (int)EmClock::now(), 'dev' => '', 'tok' => ''];
+                    'buf' => '', 'partial' => '', 'pop' => 0, 'seen' => (int)EmClock::now(), 'since' => (int)EmClock::now(), 'dev' => '', 'tok' => ''];
                 $this->saveConns($conns);
                 break;
             case 2: // getrennt
@@ -138,11 +140,12 @@ class EchoMuseGateway extends IPSModuleStrict
     {
         $conns = $this->conns();
         if (!isset($conns[$key])) { // Verbunden-Meldung verpasst (Neustart des Gateways): Verbindung nachtragen
-            if (count($conns) >= self::MAX_CONNECTIONS) {
+            if (!$this->makeRoom($key)) {
                 $this->sendRaw($ip, $port, EmWebSocket::close(1013));
                 return;
             }
-            $conns[$key] = ['ip' => $ip, 'port' => $port, 'phase' => 'http', 'path' => '', 'buf' => '', 'partial' => '', 'pop' => 0, 'seen' => (int)EmClock::now(), 'dev' => '', 'tok' => ''];
+            $conns = $this->conns();
+            $conns[$key] = ['ip' => $ip, 'port' => $port, 'phase' => 'http', 'path' => '', 'buf' => '', 'partial' => '', 'pop' => 0, 'seen' => (int)EmClock::now(), 'since' => (int)EmClock::now(), 'dev' => '', 'tok' => ''];
         }
         $c = $conns[$key];
         $c['seen'] = (int)EmClock::now();
@@ -356,6 +359,12 @@ class EchoMuseGateway extends IPSModuleStrict
                 }
                 continue;
             }
+            if (!$this->belongsToDevice($c) && $now - (int)($c['since'] ?? $c['seen']) > self::UNBOUND_SECONDS) {
+                $this->SendDebug('Keepalive', $key . ' closed: no registered device', 0);
+                $this->sendRaw($c['ip'], $c['port'], EmWebSocket::close(1008));
+                $this->dropConnection($key);
+                continue;
+            }
             if ($now - (int)$c['seen'] > self::IDLE_CLOSE_SECONDS) {
                 $this->SendDebug('Keepalive', $key . ' timed out', 0);
                 $this->sendRaw($c['ip'], $c['port'], EmWebSocket::close(1001));
@@ -372,11 +381,16 @@ class EchoMuseGateway extends IPSModuleStrict
      */
     public function ApproveDevice(string $DeviceId): string
     {
-        $id = trim($DeviceId);
+        // Aus dem Formular kommt „Kennung|Prüfwert“: freigegeben wird genau der angezeigte Warteeintrag,
+        // nicht einer, den ein anderes Gerät unter derselben Kennung inzwischen geschrieben hat.
+        [$id, $print] = array_pad(explode('|', trim($DeviceId), 2), 2, '');
         if (preg_match('/^[A-Za-z0-9_.:-]{1,64}$/', $id) !== 1) {
             return 'invalid device id';
         }
         $pending = json_decode($this->ReadAttributeString('Pending'), true) ?: [];
+        if ($print !== '' && (!isset($pending[$id]) || !hash_equals($this->pendingPrint($pending[$id]), $print))) {
+            return 'the waiting device has changed, reload the form';
+        }
         // Die Freigabe gilt dem Gerät, das gerade wartet: dessen Adresse und Token werden gebunden.
         // Ohne Warteeintrag (Freigabe vorab) bindet die erste Anmeldung.
         $approved = $this->approvedMap();
@@ -399,12 +413,21 @@ class EchoMuseGateway extends IPSModuleStrict
         return '';
     }
 
+    /** @param array<string, mixed> $p Prüfwert eines Warteeintrags über Adresse und Token */
+    private function pendingPrint(array $p): string
+    {
+        return substr(hash('sha256', (string)($p['ip'] ?? '') . '|' . (string)($p['tok'] ?? '')), 0, 16);
+    }
+
     public function GetConfigurationForm(): string
     {
         $options = [];
         foreach (json_decode($this->ReadAttributeString('Pending'), true) ?: [] as $pid => $p) {
             $reason = (string)($p['reason'] ?? '');
-            $options[] = ['caption' => $pid . ($reason !== '' && $reason !== 'unknown device' ? ' (' . $this->Translate($reason) . ')' : ''), 'value' => (string)$pid];
+            $tok = (string)($p['tok'] ?? '');
+            $detail = (string)($p['ip'] ?? '') . ', ' . ($tok !== '' ? 'Token ' . substr($tok, 0, 8) : $this->Translate('no token'))
+                . ($reason !== '' && $reason !== 'unknown device' ? ', ' . $this->Translate($reason) : '');
+            $options[] = ['caption' => $pid . ' (' . $detail . ')', 'value' => $pid . '|' . $this->pendingPrint($p)];
         }
         $online = array_map(static fn(string $id): string => $id, array_keys($this->devices()));
         return (string)json_encode([
@@ -455,6 +478,46 @@ class EchoMuseGateway extends IPSModuleStrict
             $this->WriteAttributeString('Approved', (string)json_encode($approved));
         }
         return '';
+    }
+
+    /**
+     * Platz für eine neue Verbindung. Ist die Grenze erreicht, weicht die älteste Verbindung, die
+     * zu keinem angemeldeten Gerät gehört; so können Fremde die Plätze der Dots nicht belegen.
+     */
+    private function makeRoom(string $key): bool
+    {
+        $conns = $this->conns();
+        if (isset($conns[$key]) || count($conns) < self::MAX_CONNECTIONS) {
+            return true;
+        }
+        $oldest = null;
+        foreach ($conns as $k => $c) {
+            if (!$this->belongsToDevice($c) && ($oldest === null || (int)($c['since'] ?? $c['seen']) < (int)($conns[$oldest]['since'] ?? $conns[$oldest]['seen']))) {
+                $oldest = $k;
+            }
+        }
+        if ($oldest === null) {
+            return false;
+        }
+        $this->sendRaw($conns[$oldest]['ip'], (int)$conns[$oldest]['port'], EmWebSocket::close(1008));
+        $this->dropConnection((string)$oldest);
+        return true;
+    }
+
+    /** @param array<string, mixed> $c ob die Verbindung zu einem angemeldeten Gerät gehört (/control mit Gerät, /data mit gleicher Adresse und gleichem Token) */
+    private function belongsToDevice(array $c): bool
+    {
+        if (($c['path'] ?? '') === '/control') {
+            return (string)($c['dev'] ?? '') !== '';
+        }
+        if (($c['path'] ?? '') === '/data') {
+            foreach ($this->devices() as $d) {
+                if ($d['ip'] === $c['ip'] && ($d['tok'] ?? '') === ($c['tok'] ?? '')) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** @return array<string, array{ip: string, tok: string}> freigegebene Geräte mit ihrer Bindung */
