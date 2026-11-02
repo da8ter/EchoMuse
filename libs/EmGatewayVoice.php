@@ -9,6 +9,11 @@ declare(strict_types=1);
  * Ton da ist; die Antwort kommt als Spool-Datei zurück und wird sofort abgespielt. Die beiden
  * Instanzen rufen sich nie gegenseitig auf (sie würden einander blockieren): Ton liegt in
  * Dateien, Meldungen laufen über Variablenänderungen, die Symcon asynchron zustellt.
+ *
+ * Folgefragen: Ist eine Antwort fertig und auf dem Dot verklungen (playback_stats), öffnet das
+ * Gateway einen begrenzten Turn (mic_start mit lock_mic). Der Dot schickt dann 0x01-Rahmen,
+ * solange er Sprache hört, und schließt mit 0x04 (Sprachende) oder 0x05 (nichts gesagt, nach 5 s).
+ * Bei 0x05 endet das Gespräch.
  */
 trait EmGatewayVoice
 {
@@ -86,6 +91,81 @@ trait EmGatewayVoice
         $this->SetValue('VOICE_MIC', (int)$voice['mic']);
     }
 
+    /** Mikrofon-Rahmen 0x01 [Folge u16 BE][PCM 16 kHz] eines Folgeturns; ein einzelnes Byte 0x04/0x05 beendet ihn. */
+    private function onTurnAudio(string $ip, string $tok, string $data): void
+    {
+        $voice = $this->voiceState();
+        if ($voice === [] || ($voice['follow'] ?? '') !== 'listen' || strlen($data) < 4 || $this->deviceByIp($ip, $tok) !== $voice['dev']) {
+            return;
+        }
+        $id = (string)$voice['dev'];
+        $pcm = substr($data, 3);
+        if (strlen($pcm) === 1 && ord($pcm) === EmProtocol::DATA_NO_SPEECH) {
+            $voice['follow'] = '';
+            $this->saveVoiceState($voice);
+            $this->voiceCommand(['cmd' => 'end', 'dev' => $id, 'reason' => 'no follow-up']); // der Dot hört schon wieder auf das Wakeword
+            return;
+        }
+        if (strlen($pcm) === 1 && ord($pcm) === EmProtocol::DATA_VAD_END) {
+            // Nach dem Sprachende schickt der Dot nichts mehr; ohne Stille danach erkennt OpenAI das Ende nie.
+            $this->endFollowUp($id, $voice, str_repeat("\0", EmRealtime::TRAILING_SILENCE_SECONDS * EmRealtime::DEVICE_MIC_RATE * 2));
+            return;
+        }
+        if (!EmSpool::append('mic_' . $id, $pcm)) {
+            return;
+        }
+        $voice['mic'] = (int)$voice['mic'] + 1;
+        $this->saveVoiceState($voice);
+        $this->SetValue('VOICE_MIC', (int)$voice['mic']);
+    }
+
+    /** Die Antwort ist auf dem Dot verklungen: Folgeturn öffnen, wenn das Gespräch darauf wartet. */
+    private function onPlaybackDone(string $id): void
+    {
+        $voice = $this->voiceState();
+        if ($voice !== [] && $voice['dev'] === $id && ($voice['follow'] ?? '') === 'wait') {
+            $this->startFollowUp($id, $voice);
+        }
+    }
+
+    /** @param array<string, mixed> $voice */
+    private function startFollowUp(string $id, array $voice): void
+    {
+        $voice['follow'] = 'listen';
+        $voice['ringSpeak'] = false;
+        $this->saveVoiceState($voice);
+        $this->sendControl($id, EmProtocol::micStart(true));
+        $this->voiceRing($id, 'listen');
+    }
+
+    /** @param array<string, mixed> $voice */
+    private function endFollowUp(string $id, array $voice, string $silence = ''): void
+    {
+        $voice['follow'] = 'think';
+        if ($silence !== '' && EmSpool::append('mic_' . $id, $silence)) {
+            $voice['mic'] = (int)$voice['mic'] + 1;
+            $this->SetValue('VOICE_MIC', (int)$voice['mic']);
+        }
+        $this->saveVoiceState($voice);
+        $this->sendControl($id, EmProtocol::micStop()); // der Dot hört danach wieder auf das Wakeword
+        $this->voiceRing($id, 'think');
+    }
+
+    /**
+     * Der Dot hat die Sitzung selbst geschlossen (max_open, ack_timeout, muted, link, stopped).
+     * @param array<string, mixed> $msg
+     */
+    private function onListenEnd(string $id, array $msg): void
+    {
+        $voice = $this->voiceState();
+        if ($voice === [] || $voice['dev'] !== $id || (int)($msg['session'] ?? -1) !== (int)$voice['session'] || !empty($voice['closed'])) {
+            return;
+        }
+        $voice['closed'] = true;
+        $this->saveVoiceState($voice);
+        $this->voiceCommand(['cmd' => 'end', 'dev' => $id, 'reason' => 'closed on the device: ' . mb_substr((string)($msg['reason'] ?? ''), 0, 40)]);
+    }
+
     /** Meldung des Voice-Moduls (Variable EVENT). */
     private function onVoiceEvent(string $json): void
     {
@@ -97,8 +177,21 @@ trait EmGatewayVoice
         $id = (string)$voice['dev'];
         switch ((string)$e['ev']) {
             case 'speech_end':
+                if (($voice['follow'] ?? '') === 'listen') {
+                    $this->endFollowUp($id, $voice);
+                    break;
+                }
                 $this->closeListen($id, $voice, 'end_of_speech');
                 $this->voiceRing($id, 'think');
+                break;
+            case 'answered':
+                // Antwort vollständig: nach dem restlichen Ton folgt das Ende, dann der Folgeturn.
+                $this->endStream($id);
+                $voice['follow'] = 'wait';
+                $this->saveVoiceState($voice);
+                if (empty($voice['ringSpeak'])) { // ohne Ton kommt kein playback_stats
+                    $this->startFollowUp($id, $voice);
+                }
                 break;
             case 'audio':
                 [$pcm, $off] = EmSpool::read('out_' . $id, (int)$voice['outOff']);
@@ -118,6 +211,9 @@ trait EmGatewayVoice
             case 'error':
             case 'busy':
                 $this->closeListen($id, $voice, (string)$e['ev']);
+                if (($voice['follow'] ?? '') === 'listen') {
+                    $this->sendControl($id, EmProtocol::micStop()); // offenen Folgeturn beenden
+                }
                 // Der Ring geht aus, wenn der letzte Ton hinaus ist — läuft noch keiner, sofort.
                 $play = $this->plays();
                 if (isset($play[$id])) {

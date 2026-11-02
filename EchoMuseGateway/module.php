@@ -224,6 +224,8 @@ class EchoMuseGateway extends IPSModuleStrict
             case EmWebSocket::OP_BINARY:
                 if ($c['path'] === '/data' && $data !== '' && ord($data[0]) === EmProtocol::DATA_SESSION_AUDIO) {
                     $this->onSessionAudio((string)$c['ip'], (string)($c['tok'] ?? ''), $data);
+                } elseif ($c['path'] === '/data' && $data !== '' && ord($data[0]) === EmProtocol::DATA_MIC) {
+                    $this->onTurnAudio((string)$c['ip'], (string)($c['tok'] ?? ''), $data);
                 }
                 return;
             default:
@@ -263,6 +265,12 @@ class EchoMuseGateway extends IPSModuleStrict
                 break;
             case 'oww_wake':
                 $this->onWake($id, $msg);
+                break;
+            case 'listen_end':
+                $this->onListenEnd($id, $msg);
+                break;
+            case 'playback_stats':
+                $this->onPlaybackDone($id);
                 break;
         }
     }

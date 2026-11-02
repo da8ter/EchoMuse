@@ -15,6 +15,12 @@ final class EmRealtime
     /** Realtime rechnet mit 24 kHz, 16 Bit, mono. */
     public const RATE = 24000;
     public const DEVICE_MIC_RATE = 16000;
+    /**
+     * Stille nach dem Sprachende eines Folgeturns: Der Dot schickt danach nichts mehr, und die
+     * Sprachende-Erkennung von OpenAI braucht Ton, der weiterläuft (Annahme: sie zählt im Ton,
+     * nicht nach der Uhr). semantic_vad mit eagerness medium wartet höchstens 4 s.
+     */
+    public const TRAILING_SILENCE_SECONDS = 4;
 
     public static function path(string $model): string
     {

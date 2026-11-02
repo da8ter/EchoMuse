@@ -434,7 +434,66 @@ $server('{"type":"response.done","response":{"status":"completed","output":[{"ty
 Kernel::advance(2);
 $f = $take('192.0.2.50', 40011);
 check(count(array_filter($f, static fn(array $x): bool => ($x['data'] ?? '') === "\x03")) === 1, 'Ende der Antwort → Ende-Rahmen 0x03 an den Dot');
-check(count(array_filter($GLOBALS['symdo'], static fn(array $c): bool => $c['body']['action'] === 'close')) === 1, 'SymDo-Sitzung geschlossen (zählt die Sprechzeit)');
+$symdoClose = static fn(): int => count(array_filter($GLOBALS['symdo'], static fn(array $c): bool => $c['body']['action'] === 'close'));
+$closeSent = static fn(): bool => array_filter($GLOBALS['clientSent'], static fn(string $t): bool => (EmWebSocket::decode($t)['messages'][0]['op'] ?? 0) === EmWebSocket::OP_CLOSE) !== [];
+check($symdoClose() === 0 && !$closeSent() && World::value($voice, 'STATE') === 'wartet auf Folgefrage', 'Antwort fertig: Sitzung bleibt offen für eine Folgefrage');
+$parentCfg = json_decode(Kernel::$instances[$voice]['object']->GetConfigurationForParent(), true);
+check($parentCfg['Open'] === true, 'während des Gesprächs gibt Voice dem Socket Open=true vor (kein Hinweis in der Konsole, Übernehmen legt nicht auf)');
+$controls = static fn(array $f): array => array_values(array_map($json, $f));
+$typesOf = static fn(array $f): array => array_map(static fn(array $m): string => (string)($m['type'] ?? ''), $controls($f));
+check(!in_array('mic_start', $typesOf($take('192.0.2.50', 40010)), true), 'kein Folgeturn, solange die Antwort noch spielt');
+
+// Folgefrage 1: der Dot erkennt das Sprachende selbst (0x04)
+$turn = static fn(int $seq, string $payload): string => EmWebSocket::clientFrame(EmWebSocket::OP_BINARY, "\x01" . pack('n', $seq) . $payload);
+$deliver('192.0.2.50', 40010, 0, $send('{"type":"playback_stats","periods":220,"underruns":0}'));
+Kernel::deliverUpdates();
+$c = $controls($take('192.0.2.50', 40010));
+$micStart = array_values(array_filter($c, static fn(array $m): bool => ($m['type'] ?? '') === 'mic_start'));
+check(count($micStart) === 1 && $micStart[0]['lock_mic'] === true, 'Antwort verklungen (playback_stats) → begrenzter Turn: mic_start mit lock_mic');
+check(in_array('led_anim', array_column($c, 'type'), true), 'Ring zeigt wieder Zuhören');
+$GLOBALS['clientSent'] = [];
+$deliver('192.0.2.50', 40011, 0, $turn(0, $pcm16));
+Kernel::deliverUpdates();
+$appends = array_values(array_filter($sentFrames(), static fn($m): bool => ($m['type'] ?? '') === 'input_audio_buffer.append'));
+check(count($appends) === 1 && strlen(base64_decode($appends[0]['audio'])) === 4800, 'Ton des Folgeturns (0x01) geht an OpenAI');
+$GLOBALS['clientSent'] = [];
+$deliver('192.0.2.50', 40011, 0, $turn(1, "\x04"));
+Kernel::deliverUpdates();
+check(in_array('mic_stop', $typesOf($take('192.0.2.50', 40010)), true), 'Sprachende des Dots (0x04) → mic_stop, der Dot hört wieder auf das Wakeword');
+$stille = array_sum(array_map(static fn($m): int => strlen(base64_decode($m['audio'])), array_filter($sentFrames(), static fn($m): bool => ($m['type'] ?? '') === 'input_audio_buffer.append')));
+check($stille === EmRealtime::TRAILING_SILENCE_SECONDS * EmRealtime::RATE * 2, 'danach Stille an OpenAI, damit dessen Sprachende-Erkennung schließt (' . $stille . ' Byte)');
+$GLOBALS['clientSent'] = [];
+$deliver('192.0.2.50', 40011, 0, $turn(2, $pcm16));
+Kernel::deliverUpdates();
+check($sentFrames() === [], 'Ton nach dem Sprachende wird verworfen');
+$server('{"type":"input_audio_buffer.speech_stopped"}');
+check(!in_array('listen_close', $typesOf($take('192.0.2.50', 40010)), true), 'speech_stopped im Folgeturn schickt kein zweites listen_close');
+$server(json_encode(['type' => 'response.output_audio.delta', 'delta' => $delta]));
+$server('{"type":"response.done","response":{"status":"completed","output":[{"type":"message"}]}}');
+Kernel::advance(2);
+$take('192.0.2.50', 40011);
+
+// Folgefrage 2: OpenAI erkennt das Ende zuerst; das späte 0x04 bleibt folgenlos
+$deliver('192.0.2.50', 40010, 0, $send('{"type":"playback_stats","periods":10,"underruns":0}'));
+Kernel::deliverUpdates();
+check(in_array('mic_start', $typesOf($take('192.0.2.50', 40010)), true), 'nach der zweiten Antwort wieder ein Folgeturn');
+$deliver('192.0.2.50', 40011, 0, $turn(0, $pcm16));
+Kernel::deliverUpdates();
+$server('{"type":"input_audio_buffer.speech_stopped"}');
+check(in_array('mic_stop', $typesOf($take('192.0.2.50', 40010)), true), 'speech_stopped von OpenAI → mic_stop');
+$GLOBALS['clientSent'] = [];
+$deliver('192.0.2.50', 40011, 0, $turn(1, "\x04"));
+Kernel::deliverUpdates();
+check($sentFrames() === [] && $take('192.0.2.50', 40010) === [], 'spätes 0x04: keine Stille, kein zweites mic_stop');
+$server('{"type":"response.done","response":{"status":"completed","output":[{"type":"message"}]}}');
+check(in_array('mic_start', $typesOf($take('192.0.2.50', 40010)), true), 'Antwort ohne Ton: Folgeturn sofort (es kommt kein playback_stats)');
+
+// Folgefrage 3: nichts gesagt (0x05) → Gespräch endet
+$GLOBALS['clientSent'] = [];
+$deliver('192.0.2.50', 40011, 0, $turn(0, "\x05"));
+Kernel::deliverUpdates();
+check(!in_array('mic_stop', $typesOf($take('192.0.2.50', 40010)), true), 'nichts gesagt: kein mic_stop nötig, der Dot kehrt selbst zum Wakeword zurück');
+check($symdoClose() === 1, 'SymDo-Sitzung geschlossen (zählt die Sprechzeit)');
 $closeFrame = array_filter($GLOBALS['clientSent'], static fn(string $t): bool => (EmWebSocket::decode($t)['messages'][0]['op'] ?? 0) === EmWebSocket::OP_CLOSE);
 check($closeFrame !== [] && World::value($voice, 'STATE') !== 'verbinde' && !is_file(EmSpool::path('mic_G090LF0123456789')) && !is_file(EmSpool::path('out_G090LF0123456789')), 'Verbindung geschlossen, Spool-Dateien weg');
 check(Kernel::$instances[$gw]['buffers']['Voice'] === '[]' || json_decode(Kernel::$instances[$gw]['buffers']['Voice'], true) === [], 'Gateway hat die Sitzung vergessen');
@@ -446,6 +505,16 @@ Kernel::deliverUpdates();
 $take('192.0.2.50', 40010);
 $GLOBALS['clientSent'] = [];
 EchoMuseTestSecondDot($gw, $deliver, $request, $send, $register, $take, $json);
+
+// Der Dot schließt die Sitzung selbst (nach 30 s ohne Sprachende: max_open)
+$deliver('192.0.2.50', 40010, 0, $send('{"type":"listen_end","session":5,"reason":"max_open"}'));
+Kernel::deliverUpdates();
+check($symdoClose() === 0, 'listen_end einer fremden Sitzungsnummer ändert nichts');
+$deliver('192.0.2.50', 40010, 0, $send('{"type":"listen_end","session":8,"reason":"max_open"}'));
+Kernel::deliverUpdates();
+check($symdoClose() === 1 && json_decode(Kernel::$instances[$gw]['buffers']['Voice'], true) === [], 'listen_end der laufenden Sitzung beendet das Gespräch (statt bis zur Höchstdauer „hört zu“)');
+check(!in_array('listen_close', $typesOf($take('192.0.2.50', 40010)), true), 'kein listen_close für eine Sitzung, die der Dot schon geschlossen hat');
+check(json_decode(Kernel::$instances[$voice]['object']->GetConfigurationForParent(), true)['Open'] === false, 'ohne Gespräch gibt Voice dem Socket Open=false vor');
 
 section('Bindung der Freigabe (Token oder Adresse)');
 $anmelden = static function (string $ip, int $port, string $id, ?string $token) use ($deliver, $request, $send, $register, $take, $json): string {

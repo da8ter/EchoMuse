@@ -75,11 +75,15 @@ class EchoMuseVoice extends IPSModuleStrict
         $this->SetStatus($gw > 0 && $this->symdo()->configured() ? IS_ACTIVE : 201);
     }
 
+    /**
+     * Offen nur während eines Gesprächs. So zeigt die Konsole währenddessen keinen Hinweis
+     * „Konfiguration muss aktualisiert werden“, und ein Übernehmen legt das Gespräch nicht auf.
+     */
     public function GetConfigurationForParent(): string
     {
         return (string)json_encode([
             'Host' => $this->ReadPropertyString('RealtimeHost'), 'Port' => $this->ReadPropertyInteger('RealtimePort'),
-            'UseSSL' => $this->ReadPropertyBoolean('RealtimeSSL'), 'VerifyHost' => true, 'VerifyPeer' => true, 'Open' => false,
+            'UseSSL' => $this->ReadPropertyBoolean('RealtimeSSL'), 'VerifyHost' => true, 'VerifyPeer' => true, 'Open' => $this->session() !== null,
         ]);
     }
 
@@ -153,6 +157,12 @@ class EchoMuseVoice extends IPSModuleStrict
                     $this->finish('stopped', false);
                 }
                 break;
+            case 'end': // kein Folgeturn, oder der Dot hat die Sitzung selbst geschlossen
+                $s = $this->session();
+                if ($s !== null && $s['dev'] === (string)($c['dev'] ?? '')) {
+                    $this->finish(mb_substr((string)($c['reason'] ?? 'ended'), 0, 60), true);
+                }
+                break;
         }
     }
 
@@ -195,9 +205,10 @@ class EchoMuseVoice extends IPSModuleStrict
             $this->finish('no socket', true);
             return;
         }
-        IPS_SetConfiguration($io, $this->GetConfigurationForParent());
-        IPS_ApplyChanges($io); // Open=false: sicher zurücksetzen, dann öffnen
         $cfg = json_decode($this->GetConfigurationForParent(), true);
+        $cfg['Open'] = false;
+        IPS_SetConfiguration($io, (string)json_encode($cfg));
+        IPS_ApplyChanges($io); // sicher zurücksetzen, dann öffnen
         $cfg['Open'] = true;
         IPS_SetConfiguration($io, (string)json_encode($cfg));
         IPS_ApplyChanges($io);
@@ -365,7 +376,13 @@ class EchoMuseVoice extends IPSModuleStrict
             $this->saveSession($s);
             return;
         }
-        $this->finish($e['status'] === 'completed' || $e['status'] === '' ? 'completed' : (string)$e['status'], true);
+        if ($e['status'] !== 'completed' && $e['status'] !== '') {
+            $this->finish((string)$e['status'], true);
+            return;
+        }
+        // Sitzung bleibt offen: das Gateway öffnet nach der Antwort einen Folgeturn und meldet „end“, wenn keiner kommt.
+        $this->SetValue('STATE', $this->Translate('waiting for a follow-up'));
+        $this->emit(['ev' => 'answered', 'dev' => $s['dev'], 'session' => $s['session']]);
     }
 
     // ------------------------------------------------------------------ Ende
