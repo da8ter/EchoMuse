@@ -51,6 +51,9 @@ class EchoMuseGateway extends IPSModuleStrict
         $this->RegisterPropertyBoolean('AutoApprove', false);
         $this->RegisterPropertyInteger('VoiceInstance', 0);
         $this->RegisterPropertyBoolean('WakeSound', true);
+        /* Wakeword-Modell des Dots (Dateiname ohne .onnx in dessen oww-Ordner). Leer = Vorgabe der
+           Firmware („Hey Jarvis“). Der Dot merkt es sich nicht: Das Gateway schickt es bei jeder Anmeldung. */
+        $this->RegisterPropertyString('WakeWord', '');
         $this->RegisterAttributeString('Approved', '[]');
         $this->RegisterAttributeString('Pending', '{}');
         $this->RegisterTimer('Keepalive', 0, 'EMGW_Keepalive($_IPS[\'TARGET\']);');
@@ -83,6 +86,10 @@ class EchoMuseGateway extends IPSModuleStrict
             }
         }
         $this->SetTimerInterval('Keepalive', 20000);
+        // Geänderte Einstellungen (Wakeword, Signalton) gleich an die verbundenen Dots.
+        foreach (array_keys($this->devices()) as $id) {
+            $this->configureVoice((string)$id);
+        }
         $this->SetSummary(sprintf('Port %d', $this->ReadPropertyInteger('Port')));
         $this->SetStatus(IS_ACTIVE);
     }
@@ -436,6 +443,13 @@ class EchoMuseGateway extends IPSModuleStrict
                 ['type' => 'CheckBox', 'name' => 'AutoApprove', 'caption' => 'Accept every device without asking (home network only)'],
                 ['type' => 'SelectInstance', 'name' => 'VoiceInstance', 'caption' => 'EchoMuse Voice (empty = no voice conversations)'],
                 ['type' => 'CheckBox', 'name' => 'WakeSound', 'caption' => 'Play a short sound when the wake word is heard'],
+                ['type' => 'Select', 'name' => 'WakeWord', 'caption' => 'Wake word', 'options' => [
+                    ['caption' => 'Firmware default (Hey Jarvis)', 'value' => ''],
+                    ['caption' => 'Alexa', 'value' => 'alexa_v0.1'],
+                    ['caption' => 'Hey Jarvis', 'value' => 'hey_jarvis_v0.1'],
+                    ['caption' => 'Hey Mycroft', 'value' => 'hey_mycroft_v0.1'],
+                    ['caption' => 'Hey Rhasspy', 'value' => 'hey_rhasspy_v0.1'],
+                ]],
             ],
             'actions' => [
                 ['type' => 'Label', 'caption' => $online === [] ? 'No device connected.' : 'Connected: ' . implode(', ', $online)],

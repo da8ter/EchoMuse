@@ -24,11 +24,16 @@ trait EmGatewayVoice
         return $this->voiceEnabled() ? array_merge(EmProtocol::FEATURES, ['listen_session']) : EmProtocol::FEATURES;
     }
 
-    /** Nach der Anmeldung: Wakeword auf dem Gerät, Signalton bei erkanntem Wakeword. */
+    /** Nach der Anmeldung: Wakeword auf dem Gerät, Signalton bei erkanntem Wakeword, gewähltes Modell. */
     private function configureVoice(string $id): void
     {
         if ($this->voiceEnabled()) {
-            $this->sendControl($id, EmProtocol::config(['owwOnDevice' => 'on', 'wakeSound' => $this->ReadPropertyBoolean('WakeSound')]));
+            $cfg = ['owwOnDevice' => 'on', 'wakeSound' => $this->ReadPropertyBoolean('WakeSound')];
+            $modell = EmProtocol::wakeModel($this->ReadPropertyString('WakeWord'));
+            if ($modell !== '') {
+                $cfg['owwModel'] = $modell;
+            }
+            $this->sendControl($id, EmProtocol::config($cfg));
         }
     }
 

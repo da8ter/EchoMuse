@@ -16,7 +16,9 @@
             "Voice command": "Voice command",
             "Voice microphone signal": "Voice microphone signal",
             "EchoMuse Voice (empty = no voice conversations)": "EchoMuse Voice (empty = no voice conversations)",
-            "Play a short sound when the wake word is heard": "Play a short sound when the wake word is heard"
+            "Play a short sound when the wake word is heard": "Play a short sound when the wake word is heard",
+            "Wake word": "Wake word",
+            "Firmware default (Hey Jarvis)": "Firmware default (Hey Jarvis)"
         },
         "de": {
             "EchoMuse Gateway": "EchoMuse - Gateway",
@@ -34,7 +36,9 @@
             "Voice command": "Sprachbefehl",
             "Voice microphone signal": "Sprach-Mikrofonsignal",
             "EchoMuse Voice (empty = no voice conversations)": "EchoMuse Voice (leer = keine Sprachgespräche)",
-            "Play a short sound when the wake word is heard": "Kurzen Ton spielen, wenn das Wakeword erkannt wurde"
+            "Play a short sound when the wake word is heard": "Kurzen Ton spielen, wenn das Wakeword erkannt wurde",
+            "Wake word": "Wakeword",
+            "Firmware default (Hey Jarvis)": "Vorgabe der Firmware (Hey Jarvis)"
         }
     }
 }

@@ -4,7 +4,7 @@
 
 ## Entscheidungen
 
-- **Wakeword auf dem Dot** (`owwOnDevice: on`, Private Listening): bis zum Wakeword verlässt kein Ton das Gerät. Das Gateway schaltet das nach der Anmeldung ein, wenn ein Voice-Modul gewählt ist, und meldet dann das Merkmal `listen_session` im `ack`. Das Wakeword-Modell installiert die EchoMuse-Einrichtung, nicht dieses Modul.
+- **Wakeword auf dem Dot** (`owwOnDevice: on`, Private Listening): bis zum Wakeword verlässt kein Ton das Gerät. Das Gateway schaltet das nach der Anmeldung ein, wenn ein Voice-Modul gewählt ist, und meldet dann das Merkmal `listen_session` im `ack`. Das Wakeword-Modell installiert die EchoMuse-Einrichtung, nicht dieses Modul. Welches der installierten Modelle gilt, wählt die Gateway-Property `WakeWord` (→ `owwModel`, Name ohne `.onnx`). Die Firmware speichert die Wahl nicht (nur im Speicher, Vorgabe `hey_jarvis_v0.1`), deshalb schickt das Gateway sie bei jeder Anmeldung und beim Übernehmen (seit 02.11.2026). Auf dem Dot liegen nach der Einrichtung `alexa_v0.1`, `hey_jarvis_v0.1`, `hey_mycroft_v0.1`, `hey_rhasspy_v0.1`.
 - **Ablauf:** `oww_wake` (mit Sitzungsnummer) → `listen_ack` → Mikrofon als `0x07`-Rahmen (16 kHz) → Voice → OpenAI meldet `speech_stopped` → Gateway `listen_close` → Werkzeugaufrufe über SymDo → Antwort-Audio (24 kHz) als **offener Strom** zum Dot, der erst nach der letzten `response.done` endet.
 - **Gestreamt statt getrennter Erkennung und Stimme:** kein Whisper-Umweg und keine fertige Tondatei; das erste Antwort-Audio liegt rund eine Sekunde nach Sprachende vor (gemessen 04.10.2026 mit echtem SymDo, echtem OpenAI und Attrappen-Dot, nicht am Code prüfbar).
 - **SymDo prägt den Zugangsschlüssel:** `POST <SymDo-Hook>/v1/voice` mit `action` = `open` | `opened` | `tool` | `close`, Bearer-Token eines gekoppelten SymDo-Geräts und Nutzerkennung. Sitzung, Werkzeuge und Zuhörsteuerung stecken im Schlüssel; das Modul verbindet nur `wss://api.openai.com/v1/realtime?model=…` und spricht. Der Schlüssel lebt nur im Sitzungspuffer.
@@ -27,4 +27,4 @@
 - **Client Socket liefert ebenfalls HEX** (Module Strict); gesendet wird mit `CSCK_SendText` (Binärdaten roh).
 - Der Takt der Attrappe muss echt sein: ohne Warten auf den Socket beim Streamen lief die Probe etwa 2,5-fach zu langsam.
 
-Stand: geprüft gegen den Code am 08.10.2026
+Stand: geprüft gegen den Code am 02.11.2026

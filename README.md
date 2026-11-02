@@ -45,7 +45,7 @@ Symcon als Controller für Echo Dots der 2. Generation mit der freien Firmware [
 Der Dot erkennt sein Wakeword selbst; bis dahin verlässt kein Ton das Gerät. Danach läuft die Sprache gestreamt zu OpenAI und die Antwort kommt schon beim Erzeugen zurück. Der OpenAI-Schlüssel bleibt in SymDo.
 
 1. **EchoMuse Voice** anlegen (es legt einen Client Socket an). SymDo-Adresse (`http://<symcon>:3777/hook/lists/app`), SymDo-Zugangstoken und Nutzerkennung eintragen, das Gateway wählen.
-2. Im **Gateway** das Voice-Modul wählen. Das Gateway schaltet die Wakeword-Erkennung auf dem Dot und den Signalton ein.
+2. Im **Gateway** das Voice-Modul wählen. Das Gateway schaltet die Wakeword-Erkennung auf dem Dot und den Signalton ein. Unter **Wakeword** steht eines der Modelle, die die EchoMuse-Einrichtung auf den Dot gelegt hat: Alexa, Hey Jarvis, Hey Mycroft oder Hey Rhasspy (Vorgabe der Firmware: Hey Jarvis). Der Dot merkt sich die Wahl nicht; das Gateway schickt sie bei jeder Anmeldung und beim Übernehmen.
 3. In SymDo ein Realtime-Modell einstellen, nicht GPT-Live (das läuft über WebRTC).
 
 Es läuft eine Sitzung gleichzeitig; ein zweiter Dot bekommt „busy“.

@@ -72,6 +72,16 @@ final class EmProtocol
         return self::json(['type' => 'config'] + $config);
     }
 
+    /**
+     * Name eines Wakeword-Modells für `owwModel`, oder '' wenn leer oder unzulässig. Die Firmware
+     * lädt `<Name>.onnx` aus ihrem oww-Ordner; Pfadteile lassen wir gar nicht erst durch.
+     */
+    public static function wakeModel(string $name): string
+    {
+        $name = trim($name);
+        return preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/', $name) === 1 ? $name : '';
+    }
+
     public static function playCue(string $cue): string
     {
         return self::json(['type' => 'play_cue', 'cue' => $cue]);
