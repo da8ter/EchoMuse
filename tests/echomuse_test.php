@@ -325,6 +325,8 @@ $cfg = $json($f[1] ?? []);
 check(in_array('listen_session', $ack['features'] ?? [], true) && in_array('output_chain', $ack['features'], true), 'ack nennt listen_session, sobald Voice verbunden ist');
 check(($cfg['type'] ?? '') === 'config' && ($cfg['owwOnDevice'] ?? '') === 'on' && ($cfg['wakeSound'] ?? null) === true, 'Konfiguration: Wakeword auf dem Dot, Signalton an');
 check(!array_key_exists('owwModel', $cfg), 'ohne Wahl kein owwModel: der Dot bleibt bei der Vorgabe der Firmware');
+$mic = $json($f[2] ?? []);
+check(($mic['type'] ?? '') === 'mic_start' && ($mic['lock_mic'] ?? null) === false, 'nach der Konfiguration mic_start ohne lock_mic: startet den Strom zum Wakeword-Erkenner');
 // Wakeword wählen: geht beim Übernehmen sofort an den verbundenen Dot
 IPS_SetProperty($gw, 'WakeWord', 'alexa_v0.1');
 IPS_ApplyChanges($gw);

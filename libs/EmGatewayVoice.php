@@ -24,7 +24,12 @@ trait EmGatewayVoice
         return $this->voiceEnabled() ? array_merge(EmProtocol::FEATURES, ['listen_session']) : EmProtocol::FEATURES;
     }
 
-    /** Nach der Anmeldung: Wakeword auf dem Gerät, Signalton bei erkanntem Wakeword, gewähltes Modell. */
+    /**
+     * Nach der Anmeldung: Wakeword auf dem Gerät, Signalton bei erkanntem Wakeword, gewähltes Modell.
+     * Danach mic_start ohne lock_mic: erst das startet den Mikrofonstrom zum Wakeword-Erkenner des
+     * Dots. Die Firmware merkt sich den Wunsch nur bis zum Neustart; ohne ihn hört ein frisch
+     * gestarteter Dot nichts. Ein zweites mic_start ignoriert sie („already active“).
+     */
     private function configureVoice(string $id): void
     {
         if ($this->voiceEnabled()) {
@@ -34,6 +39,7 @@ trait EmGatewayVoice
                 $cfg['owwModel'] = $modell;
             }
             $this->sendControl($id, EmProtocol::config($cfg));
+            $this->sendControl($id, EmProtocol::micStart());
         }
     }
 
