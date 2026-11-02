@@ -17,8 +17,8 @@ final class EmRealtime
     public const DEVICE_MIC_RATE = 16000;
     /**
      * Stille nach dem Sprachende eines Folgeturns: Der Dot schickt danach nichts mehr, und die
-     * Sprachende-Erkennung von OpenAI braucht Ton, der weiterläuft (Annahme: sie zählt im Ton,
-     * nicht nach der Uhr). semantic_vad mit eagerness medium wartet höchstens 4 s.
+     * Sprachende-Erkennung von OpenAI braucht Ton, der weiterläuft. semantic_vad mit eagerness
+     * medium wartet höchstens 4 s (Probe 02.11.2026: Antwort 0,7 s nach dem Sprachende des Dots).
      */
     public const TRAILING_SILENCE_SECONDS = 4;
 

@@ -12,7 +12,8 @@
   - `0x04` → `mic_stop` (der Dot hört wieder auf das Wakeword) und 4 s Stille an OpenAI: Nach dem Sprachende schickt der Dot nichts mehr, und `semantic_vad` (eagerness medium, höchstens 4 s) bräuchte weiterlaufenden Ton. Meldet OpenAI `speech_stopped` zuerst, gibt es `mic_stop` ohne Stille.
   - `0x05` → Gespräch endet (`end` an Voice); der Dot kehrt von selbst zum Wakeword zurück.
   - Eine Antwort ohne Ton (kein `playback_stats`) öffnet den Folgeturn sofort.
-  - Als Riegel bleibt die Höchstdauer; sie zählt das ganze Gespräch. Ob die 4 s Stille bei OpenAI wirklich das Ende auslösen (Annahme: die Erkennung zählt im Ton, nicht nach der Uhr), ist erst mit der Hörprobe am echten Dot belegt.
+  - Als Riegel bleibt die Höchstdauer; sie zählt das ganze Gespräch.
+  - Gemessen 02.11.2026 (Attrappen-Dot im Docker, echtes SymDo, echtes OpenAI `gpt-realtime-mini`): Frage → Rückfrage des Modells → Folgeturn mit 0,6 s Nachlauf und `0x04` → `speech_stopped`, Antwort 0,7 s nach `0x04`, richtig verstanden; `0x05` beendet sauber (Ring aus, SymDo-Sitzung zu). Ob schon der kurze Nachlauf gereicht hätte, ist offen; die 4 s Stille bleiben als Sicherheit.
 - **`listen_end` vom Dot** (Sitzung selbst geschlossen, z. B. `max_open` nach 30 s ohne `listen_close`) beendet das Gespräch. Vorher stand Voice dann bis zur Höchstdauer auf „hört zu“ (gesehen 02.11.2026).
 - **Socket-Vorgabe `Open` = Gespräch läuft.** Mit festem `Open=false` zeigte die Konsole während eines Gesprächs „Die Konfiguration muss aufgrund eines untergeordneten Knotens aktualisiert werden“, und Übernehmen hätte aufgelegt.
 - **Gestreamt statt getrennter Erkennung und Stimme:** kein Whisper-Umweg und keine fertige Tondatei; das erste Antwort-Audio liegt rund eine Sekunde nach Sprachende vor (gemessen 04.10.2026 mit echtem SymDo, echtem OpenAI und Attrappen-Dot, nicht am Code prüfbar).
